@@ -40,9 +40,12 @@ describe('update check (#1243)', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  // Default is off (see src/upgrade/update-check.ts); force it on here so the
+  // existing "given enabled, X happens" tests below don't all need their own
+  // override. Tests that pass their own `env` replace this entirely.
   const deps = (over: Record<string, unknown> = {}) => ({
     dir,
-    env: {} as NodeJS.ProcessEnv,
+    env: { CODEGRAPH_NO_UPDATE_CHECK: '0' } as NodeJS.ProcessEnv,
     now: () => T0,
     currentVersion: '1.4.0',
     resolveLatest: async () => 'v1.5.0',
@@ -167,10 +170,29 @@ describe('update check (#1243)', () => {
       expect(fs.existsSync(updateCheckCachePath(dir))).toBe(false);
     });
 
-    it('falsy values do not disable', () => {
-      expect(updateCheckDisabled({ DO_NOT_TRACK: '0' } as NodeJS.ProcessEnv)).toBe(false);
-      expect(updateCheckDisabled({ DO_NOT_TRACK: 'false' } as NodeJS.ProcessEnv)).toBe(false);
-      expect(updateCheckDisabled({} as NodeJS.ProcessEnv)).toBe(false);
+    it('falsy DO_NOT_TRACK does not disable on its own', () => {
+      expect(updateCheckDisabled({ DO_NOT_TRACK: '0' } as NodeJS.ProcessEnv)).toBe(true); // still default-off
+      expect(updateCheckDisabled({ DO_NOT_TRACK: 'false' } as NodeJS.ProcessEnv)).toBe(true); // still default-off
+      expect(
+        updateCheckDisabled({ DO_NOT_TRACK: '0', CODEGRAPH_NO_UPDATE_CHECK: '0' } as NodeJS.ProcessEnv),
+      ).toBe(false); // explicit opt-in
+    });
+  });
+
+  describe('default (nothing configured)', () => {
+    it('is disabled with no env set at all — no network call', async () => {
+      expect(updateCheckDisabled({} as NodeJS.ProcessEnv)).toBe(true);
+      let calls = 0;
+      const notice = await refreshUpdateCheck(
+        deps({ env: {} as NodeJS.ProcessEnv, resolveLatest: async () => { calls++; return 'v1.5.0'; } }),
+      );
+      expect(notice).toBeNull();
+      expect(calls).toBe(0);
+      expect(fs.existsSync(updateCheckCachePath(dir))).toBe(false);
+    });
+
+    it('CODEGRAPH_NO_UPDATE_CHECK=0 opts back into the default-off check', () => {
+      expect(updateCheckDisabled({ CODEGRAPH_NO_UPDATE_CHECK: '0' } as NodeJS.ProcessEnv)).toBe(false);
     });
   });
 

@@ -9,6 +9,10 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Anonymous usage telemetry, the background update-availability check, and the installer's beta-waitlist prompt are now **off by default** — none of them contact any external endpoint unless explicitly enabled. Opt in with `codegraph telemetry on` or `CODEGRAPH_TELEMETRY=1` for telemetry, `CODEGRAPH_NO_UPDATE_CHECK=0` for the update check, and `CODEGRAPH_BETA_SIGNUP=1` for the beta-waitlist prompt. `DO_NOT_TRACK=1` continues to disable all three regardless of any opt-in.
+
 ### New Features
 
 - Anonymous usage telemetry is now stored entirely on CodeGraph's own first-party infrastructure — no third-party analytics vendor receives any of it, and the endpoint that receives it makes no outbound requests at all. Individual events are deleted after 90 days, leaving only anonymous daily totals. Nothing about what is collected changed, your IP address is still never read or stored, and every off-switch works exactly as before (`codegraph telemetry off`, `CODEGRAPH_TELEMETRY=0`, `DO_NOT_TRACK=1`). `TELEMETRY.md` remains the complete field-by-field list.

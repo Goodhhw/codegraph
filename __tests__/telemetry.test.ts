@@ -29,12 +29,15 @@ describe('Telemetry', () => {
   let stderrLines: string[];
   let nowValue: Date;
 
+  // Default is off (see src/telemetry/index.ts); force it on here so the
+  // existing "given enabled, X happens" tests below don't all need their own
+  // override. Tests that pass their own `env` replace this entirely.
   const make = (overrides: Partial<ConstructorParameters<typeof Telemetry>[0]> = {}) =>
     new Telemetry({
       dir,
       fetchImpl: mockFetch(calls),
       now: () => nowValue,
-      env: {},
+      env: { CODEGRAPH_TELEMETRY: '1' },
       stderr: (line) => stderrLines.push(line),
       installExitHook: false,
       ...overrides,
@@ -52,9 +55,9 @@ describe('Telemetry', () => {
   });
 
   describe('consent precedence', () => {
-    it('defaults to enabled when nothing decides otherwise', () => {
-      const t = make();
-      expect(t.getStatus()).toMatchObject({ enabled: true, decidedBy: 'default', machineId: null });
+    it('defaults to disabled when nothing decides otherwise', () => {
+      const t = make({ env: {} });
+      expect(t.getStatus()).toMatchObject({ enabled: false, decidedBy: 'default', machineId: null });
     });
 
     it('DO_NOT_TRACK beats everything, including a forced-on env and config', () => {
@@ -74,7 +77,7 @@ describe('Telemetry', () => {
     });
 
     it('stored config decides when no env is set', () => {
-      const t = make();
+      const t = make({ env: {} });
       t.setEnabled(false, 'installer');
       expect(t.getStatus()).toMatchObject({ enabled: false, decidedBy: 'config' });
     });
@@ -201,7 +204,9 @@ describe('Telemetry', () => {
       await t.flushNow();
       expect(calls[0]!.url).toBe(TELEMETRY_ENDPOINT);
 
-      const t2 = make({ env: { CODEGRAPH_TELEMETRY_ENDPOINT: 'http://localhost:9999/v1/events' } });
+      const t2 = make({
+        env: { CODEGRAPH_TELEMETRY: '1', CODEGRAPH_TELEMETRY_ENDPOINT: 'http://localhost:9999/v1/events' },
+      });
       t2.recordLifecycle('uninstall', {});
       await t2.flushNow();
       expect(calls[1]!.url).toBe('http://localhost:9999/v1/events');
@@ -279,7 +284,7 @@ describe('Telemetry', () => {
   describe('protocol safety', () => {
     it('never writes to stdout', async () => {
       const stdoutSpy = vi.spyOn(process.stdout, 'write');
-      const t = make({ env: { CODEGRAPH_TELEMETRY_DEBUG: '1' } });
+      const t = make({ env: { CODEGRAPH_TELEMETRY: '1', CODEGRAPH_TELEMETRY_DEBUG: '1' } });
       t.recordUsage('mcp_tool', 'codegraph_explore', true);
       t.recordLifecycle('install', { scope: 'local', kind: 'fresh' });
       await t.flushNow();

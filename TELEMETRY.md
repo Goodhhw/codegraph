@@ -7,31 +7,34 @@ the complete list of what is collected. If a field isn't on this page, it isn't 
 the ingest endpoint enforces this list as an allowlist and is itself
 [public, auditable code](telemetry-worker/) in this repository.
 
-## Turning it off
+## Off by default
 
-Any of these works, permanently:
-
-```bash
-codegraph telemetry off        # stores your choice (and deletes any unsent data)
-```
+Telemetry ships **disabled by default**. Nothing is recorded, no file is written under
+`~/.codegraph/`, and no connection to the telemetry endpoint is ever opened unless you
+opt in:
 
 ```bash
-export CODEGRAPH_TELEMETRY=0   # per-shell / per-CI override
-export DO_NOT_TRACK=1          # the cross-tool standard — always honored
+codegraph telemetry on         # stores your choice
+export CODEGRAPH_TELEMETRY=1   # per-shell / per-CI override
 ```
 
-`codegraph telemetry status` shows the current state, what decided it, and your machine ID.
-The interactive installer (`codegraph install`) asks up front with a visible default-on
-toggle and never re-asks. If you never saw the installer (e.g. `npx` straight into `init`),
-a one-line notice is printed to stderr before the first time anything is sent.
+`export DO_NOT_TRACK=1` always keeps it off, even over an explicit opt-in — the
+cross-tool standard always wins. `codegraph telemetry status` shows the current state,
+what decided it, and your machine ID. The interactive installer (`codegraph install`)
+asks up front with a visible default-off toggle and never re-asks.
 
-Off means off: when disabled, CodeGraph records nothing, opens no connection to the
-telemetry endpoint, and sends no "opted out" ping.
+Off means off: when disabled (the default), CodeGraph records nothing, opens no
+connection to the telemetry endpoint, and sends no "opted out" ping.
 
-Separately from telemetry, the MCP server checks GitHub for a newer release in the
-background (at most once a day) so it can tell you an update exists — it fetches a
-version number and sends nothing about you or your machine. `DO_NOT_TRACK=1` disables
-this check too; to turn off only the update check, use `CODEGRAPH_NO_UPDATE_CHECK=1`.
+Separately from telemetry, the MCP server can check GitHub for a newer release in the
+background (at most once a day) so it can tell you an update exists — it would fetch a
+version number and send nothing about you or your machine. This check is **also off by
+default**; opt in with `CODEGRAPH_NO_UPDATE_CHECK=0`. `DO_NOT_TRACK=1` keeps it off
+regardless.
+
+The installer's beta-waitlist prompt (an unrelated, always-opt-in "join CodeGraph Pro's
+early access list?" question) is likewise off by default — set
+`CODEGRAPH_BETA_SIGNUP=1` to have it offered at all; `DO_NOT_TRACK=1` suppresses it too.
 
 ## What is collected
 

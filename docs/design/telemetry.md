@@ -116,14 +116,24 @@ Resolution order (first match wins):
 1. `DO_NOT_TRACK=1` (community standard — always honored) → off
 2. `CODEGRAPH_TELEMETRY=0|1` → forced off/on for that process
 3. Global config `~/.codegraph/telemetry.json` → stored user choice
-4. Default: **on**, gated by the first-run notice below
+4. Default: **off** in this checkout (a local deviation from the upstream
+   `colbymchenry/codegraph` default of **on** — see the `codegraph-pro rule`
+   section below; treat this checkout's default as if it were running the
+   Pro-fork posture, without the fork), gated by the first-run notice below
+   when explicitly enabled
+
+The same "default off, opt in via env var" flip applies to the update check
+(`CODEGRAPH_NO_UPDATE_CHECK`, now bidirectional — `=0` opts back in) and the
+installer's beta-signup prompt (new `CODEGRAPH_BETA_SIGNUP=1` gate). See
+`TELEMETRY.md` for the user-facing version of this.
 
 Surfaces:
 
 - **Installer (interactive):** a visible clack toggle in the existing prompt flow —
   "Share anonymous usage data? (no code, paths, or names — see TELEMETRY.md)" — default
-  yes. Choice persisted with `consent_source: "installer"`. Re-runs/upgrades respect the
-  stored choice and don't re-ask.
+  no in this checkout (upstream default is yes). Choice persisted with
+  `consent_source: "installer"`. Re-runs/upgrades respect the stored choice and don't
+  re-ask.
 - **Headless paths** (`npx codegraph init`, MCP server — no TTY, never prompt): right
   before the **first actual send** (recording only buffers locally and stays silent — so
   the installer's explicit toggle always precedes any notice), print one line to
@@ -241,6 +251,15 @@ The private `codegraph-pro` fork ships inside customer containers whose guarante
 and not enableable by the installer** (compile-time constant or stripped module), and the
 container sets `CODEGRAPH_TELEMETRY=0` as belt-and-braces. This rule lives in the fork's
 CLAUDE.md and must survive every upstream merge.
+
+**Note:** this checkout has telemetry, the update check, and the beta-signup prompt all
+flipped to the Pro-fork's default-off posture directly on `main` (not via a separate
+fork), as a local/private modification. The toggles stay code-level (not compile-time
+constants) so they remain reversible via env var, but this diverges from the upstream
+open-source default described above. Don't upstream this change to
+`colbymchenry/codegraph` without confirming with the maintainer — the OSS default-on
+posture funds/informs upstream development, which is the whole reason this rule
+distinguishes the two.
 
 ## Rollout
 

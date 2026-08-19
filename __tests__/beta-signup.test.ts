@@ -16,6 +16,7 @@ import * as os from 'os';
 import {
   BETA_SIGNUP_ENDPOINT,
   EMAIL_RE,
+  betaSignupEnabled,
   hasBetaSignupChoice,
   recordBetaSignupChoice,
   shouldOfferBetaSignup,
@@ -68,7 +69,10 @@ describe('beta signup choice persistence', () => {
 
 describe('shouldOfferBetaSignup — the shared no-spam gate', () => {
   let dir: string;
-  const tty = { stdinIsTTY: true, stdoutIsTTY: true };
+  // Default is off (see src/installer/beta-signup.ts); force the opt-in env
+  // var here so the existing "offers when nothing else says no" tests below
+  // don't each need their own override.
+  const tty = { stdinIsTTY: true, stdoutIsTTY: true, env: { CODEGRAPH_BETA_SIGNUP: '1' } as NodeJS.ProcessEnv };
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-beta-gate-'));
@@ -97,6 +101,37 @@ describe('shouldOfferBetaSignup — the shared no-spam gate', () => {
   it('never offers without a terminal (scripts, CI, piped output)', () => {
     expect(shouldOfferBetaSignup({ dir, stdinIsTTY: false, stdoutIsTTY: true })).toBe(false);
     expect(shouldOfferBetaSignup({ dir, stdinIsTTY: true, stdoutIsTTY: false })).toBe(false);
+  });
+
+  it('never offers by default — CODEGRAPH_BETA_SIGNUP must be set to 1', () => {
+    expect(shouldOfferBetaSignup({ dir, stdinIsTTY: true, stdoutIsTTY: true, env: {} })).toBe(false);
+  });
+
+  it('DO_NOT_TRACK overrides an explicit CODEGRAPH_BETA_SIGNUP=1', () => {
+    expect(
+      shouldOfferBetaSignup({
+        dir,
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        env: { CODEGRAPH_BETA_SIGNUP: '1', DO_NOT_TRACK: '1' },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('betaSignupEnabled', () => {
+  it('is off by default', () => {
+    expect(betaSignupEnabled({} as NodeJS.ProcessEnv)).toBe(false);
+  });
+
+  it('opts in with CODEGRAPH_BETA_SIGNUP=1', () => {
+    expect(betaSignupEnabled({ CODEGRAPH_BETA_SIGNUP: '1' } as NodeJS.ProcessEnv)).toBe(true);
+  });
+
+  it('DO_NOT_TRACK wins over an explicit opt-in', () => {
+    expect(
+      betaSignupEnabled({ CODEGRAPH_BETA_SIGNUP: '1', DO_NOT_TRACK: '1' } as NodeJS.ProcessEnv),
+    ).toBe(false);
   });
 });
 

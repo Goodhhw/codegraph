@@ -19,6 +19,9 @@
  *   - Off is off: `CODEGRAPH_NO_UPDATE_CHECK` (dedicated) or `DO_NOT_TRACK`
  *     (broad don't-phone-home convention — set by e.g. the Pro container's
  *     data plane) suppresses the network call AND the notice entirely.
+ *   - Default is OFF: with nothing set, no check ever runs. Set
+ *     `CODEGRAPH_NO_UPDATE_CHECK=0` to opt back in (DO_NOT_TRACK still wins
+ *     over that).
  *
  * The check itself reuses `resolveLatestVersion` — the GitHub release-redirect
  * trick with the API fallback — so version resolution can't drift from what
@@ -82,12 +85,22 @@ function envTruthy(raw: string | undefined): boolean {
   return raw !== undefined && raw !== '' && raw !== '0' && raw.toLowerCase() !== 'false';
 }
 
+function envFalsy(raw: string | undefined): boolean {
+  return raw !== undefined && (raw === '0' || raw.toLowerCase() === 'false');
+}
+
 /**
  * True when the update check must not run at all — no network call, no
- * notice. `DO_NOT_TRACK` uses the same truthiness the telemetry opt-out does.
+ * notice. `DO_NOT_TRACK` uses the same truthiness the telemetry opt-out does
+ * and always wins. Otherwise: default is disabled; `CODEGRAPH_NO_UPDATE_CHECK`
+ * is bidirectional — an explicit `0`/`false` opts back in, any other truthy
+ * value opts out (same as before).
  */
 export function updateCheckDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return envTruthy(env.CODEGRAPH_NO_UPDATE_CHECK) || envTruthy(env.DO_NOT_TRACK);
+  if (envTruthy(env.DO_NOT_TRACK)) return true;
+  if (envFalsy(env.CODEGRAPH_NO_UPDATE_CHECK)) return false;
+  if (envTruthy(env.CODEGRAPH_NO_UPDATE_CHECK)) return true;
+  return true; // default: disabled
 }
 
 export function updateCheckCachePath(dir: string): string {

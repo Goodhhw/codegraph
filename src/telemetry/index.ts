@@ -14,7 +14,8 @@
  *    go to stderr only.
  * 3. Off is off: when disabled, nothing is recorded, nothing is sent, and no
  *    socket is opened — there is no "opted out" ping. Turning telemetry off
- *    also deletes any buffered, unsent data.
+ *    also deletes any buffered, unsent data. Default is OFF — set
+ *    CODEGRAPH_TELEMETRY=1 (or `codegraph telemetry on`) to opt in.
  * 4. Fail silent: offline, endpoint down, disk full — every failure mode is
  *    silence, never a retry loop, never an error surfaced to the user/agent.
  *
@@ -182,7 +183,7 @@ export class Telemetry {
 
   /**
    * Resolution order (first match wins) — keep in sync with TELEMETRY.md:
-   * DO_NOT_TRACK=1 > CODEGRAPH_TELEMETRY=0|1 > stored config > default on.
+   * DO_NOT_TRACK=1 > CODEGRAPH_TELEMETRY=0|1 > stored config > default off.
    */
   getStatus(): TelemetryStatus {
     const config = this.readConfig();
@@ -199,7 +200,7 @@ export class Telemetry {
     if (config) {
       return { enabled: config.enabled, decidedBy: 'config', machineId, configPath: this.configPath };
     }
-    return { enabled: true, decidedBy: 'default', machineId, configPath: this.configPath };
+    return { enabled: false, decidedBy: 'default', machineId, configPath: this.configPath };
   }
 
   isEnabled(): boolean {

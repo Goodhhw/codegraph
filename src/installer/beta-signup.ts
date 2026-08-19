@@ -9,6 +9,10 @@
  * state dir (~/.codegraph) so re-installs and upgrades never re-ask —
  * mirroring the telemetry consent pattern. A failed submit stores nothing,
  * so a later install can offer again.
+ *
+ * The prompt itself is also default-off: set CODEGRAPH_BETA_SIGNUP=1 to have
+ * it offered at all. DO_NOT_TRACK always suppresses it, same as telemetry
+ * and the update check.
  */
 
 import * as fs from 'fs';
@@ -39,6 +43,18 @@ export interface BetaSignupDeps {
   /** TTY probes; default to the real process streams. Tests inject. */
   stdinIsTTY?: boolean;
   stdoutIsTTY?: boolean;
+  /** Env source for the opt-in gate; defaults to process.env. Tests inject. */
+  env?: NodeJS.ProcessEnv;
+}
+
+function envTruthy(raw: string | undefined): boolean {
+  return raw !== undefined && raw !== '' && raw !== '0' && raw.toLowerCase() !== 'false';
+}
+
+/** Default off — set CODEGRAPH_BETA_SIGNUP=1 to show the prompt. DO_NOT_TRACK always wins. */
+export function betaSignupEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (envTruthy(env.DO_NOT_TRACK)) return false;
+  return envTruthy(env.CODEGRAPH_BETA_SIGNUP);
 }
 
 function choicePath(deps: BetaSignupDeps = {}): string {
@@ -101,6 +117,7 @@ export async function submitBetaSignup(
  * machine. Exported separately so the no-spam rule is unit-testable.
  */
 export function shouldOfferBetaSignup(deps: BetaSignupDeps = {}): boolean {
+  if (!betaSignupEnabled(deps.env)) return false;
   const stdinTTY = deps.stdinIsTTY ?? process.stdin.isTTY;
   const stdoutTTY = deps.stdoutIsTTY ?? process.stdout.isTTY;
   if (!stdinTTY || !stdoutTTY) return false;

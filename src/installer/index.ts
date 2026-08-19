@@ -182,14 +182,14 @@ export async function runInstallerWithOptions(opts: RunInstallerOptions): Promis
     autoAllow = false;
   }
 
-  // Step 4½: anonymous usage telemetry — a visible default-on toggle, asked
+  // Step 4½: anonymous usage telemetry — a visible default-off toggle, asked
   // exactly once. Skipped when an env var (DO_NOT_TRACK / CODEGRAPH_TELEMETRY)
   // already decides, or when a previous run stored a choice — re-runs and
   // upgrades never re-ask.
   if (!useDefaults && getTelemetry().getStatus().decidedBy === 'default' && !getTelemetry().hasStoredChoice()) {
     const share = await clack.confirm({
       message: 'Share anonymous usage stats? (No code, paths, or names — see TELEMETRY.md)',
-      initialValue: true,
+      initialValue: false,
     });
     if (clack.isCancel(share)) {
       // Don't kill the install over the telemetry question — leave it
