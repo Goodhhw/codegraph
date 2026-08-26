@@ -79,6 +79,8 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The `codegraph context <task>` command documented in the CLI help now actually exists — it builds a ready-to-inject context pack for a task (relevant symbols, their relationships, and code) in markdown or JSON, restoring the contract external integrations like Memorix rely on (`--path`, `--format json`, `--max-nodes`, `--no-code`). (#1611)
 
+- Methods implemented in a generic or lifetime-parameterized `impl` block (`impl<T> Source for BufSource<T>`, `impl<'a> Iterator for Parents<'a>`) are now recorded under the implementing type instead of the trait. Previously such a method could not be found by its type — "who calls `BufSource::read`" had no answer — and it collided with the trait's own declaration, which could even invent a call-graph edge out of an impl body that contains no call at all. Impls on a reference (`impl Trait for &Foo`) and on a module-qualified type (`impl Trait for m::Foo`) are attributed to their type too. Re-index after upgrading. Thanks @Dshuishui. (#1588) (Rust)
+
 ## [1.5.0] - 2026-07-21
 
 # ⚡ The Rust engine release — with near-instant sync
