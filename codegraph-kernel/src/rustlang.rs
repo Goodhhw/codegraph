@@ -435,6 +435,7 @@ impl<'t> Walker<'t> {
     // --- visitNode ------------------------------------------------------------
 
     fn visit_node(&mut self, node: Node<'t>) {
+        stack_guard!();
         let kind = node.kind();
         let mut skip_children = false;
 
@@ -498,6 +499,7 @@ impl<'t> Walker<'t> {
     /// impl method's body, whose parent walk passes through the outer fn) or
     /// the stack top is class-like (trait members).
     fn extract_fn_or_method(&mut self, node: Node<'t>) {
+        stack_guard!();
         let receiver = self.receiver_type_of(node);
         let as_method = receiver.is_some() || self.inside_class_like();
 
@@ -564,6 +566,7 @@ impl<'t> Walker<'t> {
     /// extractInterface — kind `trait` (interfaceKind), inheritance from
     /// trait_bounds, body children visited with the trait pushed.
     fn extract_interface(&mut self, node: Node<'t>) {
+        stack_guard!();
         let name = self.extract_name(node);
         let extra = Extra {
             docstring: preceding_docstring(node, self.src),
@@ -584,6 +587,7 @@ impl<'t> Walker<'t> {
 
     /// Extract a Rust struct or union with a body; unit structs remain skipped.
     fn extract_aggregate(&mut self, node: Node<'t>, kind: &'static str) {
+        stack_guard!();
         let Some(body) = node.child_by_field_name("body") else { return };
         let name = self.extract_name(node);
         let extra = Extra {
@@ -606,6 +610,7 @@ impl<'t> Walker<'t> {
     /// extractEnum — body required; enum_variant children → enum_member nodes
     /// (name field only, payloads never walked); other children re-dispatched.
     fn extract_enum(&mut self, node: Node<'t>) {
+        stack_guard!();
         let Some(body) = node.child_by_field_name("body") else { return };
         let name = self.extract_name(node);
         let extra = Extra {
@@ -700,6 +705,7 @@ impl<'t> Walker<'t> {
 
     /// getRootModule (languages/rust.ts:124).
     fn root_module(&self, n: Node) -> String {
+        stack_guard!();
         let Some(first) = n.named_child(0) else {
             return self.text(n).to_string();
         };
@@ -719,6 +725,7 @@ impl<'t> Walker<'t> {
             if prefix.is_empty() { seg.to_string() } else { format!("{prefix}::{seg}") }
         }
         fn collect<'t>(w: &Walker<'t>, n: Node<'t>, prefix: &str, paths: &mut Vec<(String, Node<'t>)>) {
+            stack_guard!();
             match n.kind() {
                 "identifier" => paths.push((join(prefix, w.text(n)), n)),
                 "scoped_identifier" => {
@@ -966,6 +973,7 @@ impl<'t> Walker<'t> {
     /// every field has a field_identifier), and the field_declaration_list
     /// recursion that reaches it.
     fn extract_inheritance(&mut self, node: Node<'t>, class_row: u32) {
+        stack_guard!();
         let extends_kind = edge_kind_index("extends").unwrap();
         for i in 0..node.named_child_count() {
             let Some(child) = node.named_child(i) else { continue };
@@ -1086,6 +1094,7 @@ impl<'t> Walker<'t> {
     }
 
     fn extract_type_refs_from_subtree(&mut self, node: Node<'t>, from_row: u32) {
+        stack_guard!();
         if node.kind() == "type_identifier" {
             let type_name = self.text(node).to_string();
             if !type_name.is_empty() && !is_builtin_type(&type_name) {
@@ -1103,10 +1112,12 @@ impl<'t> Walker<'t> {
     // --- visitFunctionBody -----------------------------------------------------
 
     fn visit_function_body(&mut self, body: Node<'t>) {
+        stack_guard!();
         self.visit_for_calls_and_structure(body);
     }
 
     fn visit_for_calls_and_structure(&mut self, node: Node<'t>) {
+        stack_guard!();
         let kind = node.kind();
         self.maybe_capture_fn_refs(node);
 
@@ -1262,6 +1273,7 @@ impl<'t> Walker<'t> {
     }
 
     fn scan_fn_ref_subtree(&mut self, node: Node<'t>, depth: u32) {
+        stack_guard!();
         if depth > 12 {
             return;
         }
