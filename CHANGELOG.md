@@ -72,6 +72,8 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A C++ `.h` header whose only C++ construct is a plain derived type — `struct Derived : Base` with no export macro, `class` keyword, or access section — is now recognized as C++ (previously only the export-macro form was). Such a header was read as C, so the derived struct vanished from the index and a phantom function named after the base type appeared in its place. The check now also covers the whole file rather than its first few kilobytes, so a long C-compatible preamble no longer hides the signal. Re-index after upgrading to pick up affected headers. Thanks @Jaysenpeng. (#1592)
 - Editing `codegraph.json`'s `exclude` or `include` (or a `.gitignore`) while the MCP server is running now takes effect immediately. Previously the running file watcher kept the scope it had when it started, so a newly excluded file was removed by `codegraph sync` and then quietly re-added by the watcher seconds later — which looked like `exclude` not working at all — until the server was restarted. A scope change now refreshes the watcher and triggers a full reconcile, and a changed file the watcher hands to sync is re-checked against the current scope first, so the CLI and the live server can no longer disagree about what belongs in the index. Thanks @K1nG11. (#1590)
 
+- The `codegraph context <task>` command documented in the CLI help now actually exists — it builds a ready-to-inject context pack for a task (relevant symbols, their relationships, and code) in markdown or JSON, restoring the contract external integrations like Memorix rely on (`--path`, `--format json`, `--max-nodes`, `--no-code`). (#1611)
+
 ## [1.5.0] - 2026-07-21
 
 # ⚡ The Rust engine release — with near-instant sync
