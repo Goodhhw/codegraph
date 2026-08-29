@@ -230,6 +230,7 @@ export interface ExploreDiagnosticReport {
     maxGraph: number;
     graphGateThreshold: number;
     graphGateApplied: boolean;
+    graphMassSkipped: boolean;
     filesGrouped: number;
     filesPastLowValueFilter: number;
     filesPastScoreFloor: number;
@@ -296,6 +297,7 @@ export class ExploreDiagnostics {
   private maxGraph = 0;
   private graphGateThreshold = 0;
   private graphGateApplied = false;
+  private graphMassSkipped = false;
   private note = '';
   private session: ExploreDiagnosticSession | undefined;
   private allocPool = 0;
@@ -389,6 +391,15 @@ export class ExploreDiagnostics {
     this.graphGateThreshold = threshold;
     this.graphGateApplied = applied;
     this.stages.pastRelevanceGate = kept;
+  }
+
+  /**
+   * Whether the RWR graph-mass pass (`computeGraphRelevance`) was skipped for
+   * this call — see `resolveGraphMassMaxFiles`. Skipped calls fall back to
+   * entry/named-seed/text-hit ranking with no graph signal at all.
+   */
+  noteGraphMassSkipped(skipped: boolean): void {
+    this.graphMassSkipped = skipped;
   }
 
   /** Record one ranked candidate's scoring inputs, in final sort order. */
@@ -551,6 +562,7 @@ export class ExploreDiagnostics {
         maxGraph: this.maxGraph,
         graphGateThreshold: this.graphGateThreshold,
         graphGateApplied: this.graphGateApplied,
+        graphMassSkipped: this.graphMassSkipped,
         filesGrouped: this.stages.grouped,
         filesPastLowValueFilter: this.stages.pastLowValueFilter,
         filesPastScoreFloor: this.stages.pastScoreFloor,
@@ -712,8 +724,10 @@ export function renderTable(report: ExploreDiagnosticReport): string {
     ` → ${num(sel.filesInFinalOutput)} in output (maxFiles ${num(budget.maxFiles)})`,
   );
   out.push(
-    `  relevance gate ${sel.graphGateApplied ? 'applied' : 'not applied'}` +
-    ` at graph >= ${sel.graphGateThreshold.toFixed(5)} (6% of max ${sel.maxGraph.toFixed(5)})`,
+    sel.graphMassSkipped
+      ? `  relevance gate skipped — graph-mass (RWR) pass off (indexed file count over threshold)`
+      : `  relevance gate ${sel.graphGateApplied ? 'applied' : 'not applied'}` +
+        ` at graph >= ${sel.graphGateThreshold.toFixed(5)} (6% of max ${sel.maxGraph.toFixed(5)})`,
   );
   const dedup = report.dedup;
   if (dedup && dedup.savedChars > 0) {

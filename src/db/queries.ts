@@ -34,6 +34,24 @@ import { splitIdentifierSegments } from '../search/identifier-segments';
  * exactly the same edge-density problem as `rpc.pb.go` and nothing in its name
  * to catch it (#1500).
  */
+/**
+ * Edge-count ceiling above which `getDominantFile()` skips its query
+ * entirely. That query is an unindexed double join of `edges` to `nodes`
+ * (no WHERE clause narrows it — every edge is a candidate), so its cost
+ * scales with total edge count regardless of result size: ~50s on a
+ * 7.6M-edge engine-scale repo (Unreal Engine) versus milliseconds on repos
+ * validated so far. Override with `CODEGRAPH_DOMINANT_FILE_MAX_EDGES` (a
+ * non-numeric or negative value falls back to the default).
+ */
+const DEFAULT_DOMINANT_FILE_MAX_EDGES = 1_000_000;
+export function resolveDominantFileMaxEdges(): number {
+  const raw = process.env.CODEGRAPH_DOMINANT_FILE_MAX_EDGES;
+  if (raw === undefined || raw === '') return DEFAULT_DOMINANT_FILE_MAX_EDGES;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_DOMINANT_FILE_MAX_EDGES;
+  return Math.floor(n);
+}
+
 function isLowValueFile(filePath: string, generated?: ReadonlySet<string>): boolean {
   if (generated?.has(filePath)) return true;
   const lp = filePath.toLowerCase();
@@ -208,6 +226,12 @@ export class QueryBuilder {
   // Node cache for frequently accessed nodes (LRU-style, max 1000 entries)
   private nodeCache: Map<string, Node> = new Map();
   private readonly maxCacheSize = 1000;
+
+  // getDominantFile() result, computed at most once per connection — see the
+  // comment on that method for why (the query itself is too expensive to pay
+  // on every explore call). `undefined` = not yet computed; a stored `null`
+  // is itself a valid, cached "no dominant file" answer.
+  private dominantFileCache: { filePath: string; edgeCount: number; nextEdgeCount: number } | null | undefined;
 
   // Prepared statements (lazily initialized)
   private stmts: {
@@ -876,6 +900,7 @@ export class QueryBuilder {
    */
   clearCache(): void {
     this.nodeCache.clear();
+    this.dominantFileCache = undefined;
   }
 
   /**
@@ -908,8 +933,28 @@ export class QueryBuilder {
    * Excludes test/spec files from candidacy via path-pattern. The agent's
    * typical question is "how does X work", not "how is X tested", so
    * boosting a test file's directory would be a misfire.
+   *
+   * Result is cached for the life of this QueryBuilder (a persistent MCP
+   * daemon reuses one connection across many `codegraph_explore` calls, so
+   * this is computed once per daemon lifetime, not once per call). The
+   * underlying query has no index that lets it avoid touching every edge —
+   * it's a double join of `edges` to `nodes` with no WHERE clause to narrow
+   * the scan — so on an engine-scale repo (millions of edges) it costs tens
+   * of seconds; on repos this size that one-time cost is still paid, but
+   * never repeated. Above `resolveDominantFileMaxEdges()` the query is
+   * skipped entirely (boost is a nice-to-have ranking signal, not a
+   * correctness requirement — same trade-off as `resolveGraphMassMaxFiles`
+   * in `mcp/tools.ts` for the RWR pass).
    */
   getDominantFile(): { filePath: string; edgeCount: number; nextEdgeCount: number } | null {
+    if (this.dominantFileCache !== undefined) return this.dominantFileCache;
+
+    const edgeCount = (this.db.prepare('SELECT COUNT(*) AS c FROM edges').get() as { c: number }).c;
+    if (edgeCount > resolveDominantFileMaxEdges()) {
+      this.dominantFileCache = null;
+      return null;
+    }
+
     if (!this.stmts.getDominantFile) {
       // Pull top 20 candidates; we then filter out test/generated files
       // in code (regex-grade matching that SQL LIKE can't express). The
@@ -932,12 +977,16 @@ export class QueryBuilder {
     const rows = this.stmts.getDominantFile.all() as Array<{ file_path: string; edge_count: number }>;
     const generated = this.getGeneratedPathsAmong(rows.map(r => r.file_path));
     const filtered = rows.filter(r => !isLowValueFile(r.file_path, generated));
-    if (filtered.length === 0 || filtered[0]!.edge_count < 20) return null;
-    return {
+    if (filtered.length === 0 || filtered[0]!.edge_count < 20) {
+      this.dominantFileCache = null;
+      return null;
+    }
+    this.dominantFileCache = {
       filePath: filtered[0]!.file_path,
       edgeCount: filtered[0]!.edge_count,
       nextEdgeCount: filtered[1]?.edge_count ?? 0,
     };
+    return this.dominantFileCache;
   }
 
   /**
@@ -1247,7 +1296,14 @@ export class QueryBuilder {
       const maxFtsScore = Math.max(...results.map(r => r.score));
       const terms = query.split(/\s+/).filter(t => t.length >= 2);
       for (const term of terms) {
-        let sql = 'SELECT * FROM nodes WHERE name = ? COLLATE NOCASE';
+        // lower(name) = lower(?), NOT `name COLLATE NOCASE = ?` — the latter
+        // can't use idx_nodes_lower_name (collation mismatch with the plain
+        // idx_nodes_name index), forcing a full table scan on every term of
+        // every searchNodes() call. On a 2.1M-row nodes table this alone was
+        // ~450x slower (SCAN nodes vs SEARCH ... USING INDEX
+        // idx_nodes_lower_name) and was the dominant cost of codegraph_explore
+        // on engine-scale repos — not the RWR ranking pass.
+        let sql = 'SELECT * FROM nodes WHERE lower(name) = lower(?)';
         const params: (string | number)[] = [term];
         if (kinds && kinds.length > 0) {
           sql += ` AND kind IN (${kinds.map(() => '?').join(',')})`;
@@ -1549,7 +1605,10 @@ export class QueryBuilder {
     // Pass 1: Find files containing each queried name, identify distinctive names
     const nameToFiles = new Map<string, Set<string>>();
     for (const name of names) {
-      let sql = 'SELECT DISTINCT file_path FROM nodes WHERE name COLLATE NOCASE = ?';
+      // lower(name) = lower(?) — see the comment on the same pattern in
+      // searchNodes(); `name COLLATE NOCASE = ?` can't use idx_nodes_lower_name
+      // and forces a full table scan.
+      let sql = 'SELECT DISTINCT file_path FROM nodes WHERE lower(name) = lower(?)';
       const params: (string | number)[] = [name];
       if (kinds && kinds.length > 0) {
         sql += ` AND kind IN (${kinds.map(() => '?').join(',')})`;
@@ -1577,7 +1636,7 @@ export class QueryBuilder {
       let sql = `
         SELECT nodes.*, 1.0 as score
         FROM nodes
-        WHERE name COLLATE NOCASE = ?
+        WHERE lower(name) = lower(?)
       `;
       const params: (string | number)[] = [name];
 

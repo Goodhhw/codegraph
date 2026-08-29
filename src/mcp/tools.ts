@@ -171,6 +171,31 @@ export function getExploreBudget(fileCount: number): number {
 }
 
 /**
+ * File-count ceiling above which `computeGraphRelevance`'s RWR (graph-mass)
+ * pass is skipped inside `handleExplore`. The pass itself only ever walks the
+ * explore subgraph (hard-capped at 200 nodes via `findRelevantContext`'s
+ * `maxNodes`), so its own iteration cost doesn't scale with repo size — but
+ * on an engine-scale monorepo (Unreal Engine's source tree: hundreds of
+ * thousands of files, with a handful of near-universal base types like
+ * `UObject`/`AActor` fanning out into huge edge counts) just BUILDING that
+ * subgraph gets expensive, and the RWR pass adds real wall-clock on top.
+ * Every repo validated so far (vscode ~10K files, the ~40K tier in the
+ * explore-budget table above) stays under this and keeps full RWR ranking —
+ * this only fires for scale beyond what's been measured as fast.
+ *
+ * Override with `CODEGRAPH_GRAPH_MASS_MAX_FILES` (a non-numeric or negative
+ * value falls back to the default).
+ */
+const DEFAULT_GRAPH_MASS_MAX_FILES = 50000;
+export function resolveGraphMassMaxFiles(): number {
+  const raw = process.env.CODEGRAPH_GRAPH_MASS_MAX_FILES;
+  if (raw === undefined || raw === '') return DEFAULT_GRAPH_MASS_MAX_FILES;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_GRAPH_MASS_MAX_FILES;
+  return Math.floor(n);
+}
+
+/**
  * Adaptive output budget for `codegraph_explore`, scaled to project size.
  *
  * Smaller codebases get a tighter total cap, fewer default files, smaller
@@ -3772,9 +3797,19 @@ export class ToolHandler {
     // (org-user.storage.ts, call-connected to the matches) accrues mass; a lone
     // text match (LensSwitcher.swift, matched "switch" but calls nothing in the
     // flow) gets only its restart probability → ~0, and is dropped by the gate.
-    const nodeRwr = this.computeGraphRelevance(
-      [...subgraph.nodes.keys()], subgraph.edges, entryNodeIds,
-    );
+    //
+    // SKIPPED on engine-scale repos (see `resolveGraphMassMaxFiles`) — an
+    // all-zero map here is a graceful no-op downstream: `fileGraphScore` comes
+    // out all-zero, `centralFiles` ends up empty (its filter requires `g > 0`),
+    // the relevance gate's `maxGraph > 0` branch is skipped (no graph-based
+    // pruning), buried-rescue never fires, and the sort comparator's graph key
+    // is a no-op tie — everything falls through to entry/named-seed/text-hit
+    // ranking instead. Never throws, never changes which files are gathered.
+    const skipGraphMass = indexedFileCount > resolveGraphMassMaxFiles();
+    diag?.noteGraphMassSkipped(skipGraphMass);
+    const nodeRwr = skipGraphMass
+      ? new Map<string, number>()
+      : this.computeGraphRelevance([...subgraph.nodes.keys()], subgraph.edges, entryNodeIds);
     //
     // Carries `rankPenalty` too, so generated/low-value files are demoted on the
     // sort's PRIMARY key rather than only at the tiebreak. Everything downstream

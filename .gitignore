@@ -30,6 +30,9 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Local dev-loop scripts (dev-start.bat / dev-stop.bat) state
+dev.pid
+
 # TypeScript build info
 *.tsbuildinfo
 
