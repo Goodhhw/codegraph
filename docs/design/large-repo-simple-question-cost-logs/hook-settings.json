@@ -1,0 +1,1 @@
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash C:/Users/starp/AppData/Local/Temp/claude/D--Git-codegraph/c96bed37-c6f4-46ed-b568-caf0ec5346d0/scratchpad/ab-camera/no-cli-hook.sh"}]}]}}
