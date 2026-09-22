@@ -58,6 +58,7 @@
 // dropped first, so eviction is applied FIFO).
 import { readFileSync } from 'fs';
 import { pathToFileURL } from 'url';
+import { bucketsOf, resolvePrices, formatBucketsBrief } from './cost-buckets.mjs';
 
 // Nominal window for the share-of-window column. Override for a [1m] context.
 const WINDOW_TOKENS = Number(process.env.CG_WINDOW_TOKENS || 200_000);
@@ -326,8 +327,17 @@ export function parseSession(files) {
     processed += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0)
       + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
   }
+  // The raw `output_tokens` term above is the unreliable snapshot the header
+  // warns about (≈10 on a run that billed ~3,700 output tokens), so `processed`
+  // under-counts by the real output — a ~2% effect on a 200K-token run, kept
+  // as-is so the figure stays comparable with earlier campaigns. The billed
+  // BUCKETS (CG-39) are the number that explains a cost gap: cache writes and
+  // output are 20x / 50x the price of a cache read, and the reconciled output
+  // there is derived from `total_cost_usd`, not from the raw field.
+  const buckets = bucketsOf(events, resolvePrices());
 
   return {
+    buckets,
     files, toolCalls, counts, initTools, result, results, raced, cliCalls, cliContaminated,
     exploreTexts,
     // What the agent did after each explore — the free sufficiency signal (CG-8).
@@ -1349,6 +1359,28 @@ function selftest() {
   checkIs('a run with no explore says so',
     formatAllocation({ allocation: computeAllocation([], 'answer') }).includes('no codegraph_explore responses'), true);
 
+  // Billed buckets (CG-39): usage deduped by message.id, 5m/1h split read off
+  // `usage.cache_creation`, and output RECONCILED from total_cost_usd rather
+  // than trusted from the raw field (2 here; the bill says 2,000).
+  delete process.env.MODEL; delete process.env.CG_PRICES; // sonnet table
+  const bUsage = {
+    input_tokens: 10, cache_read_input_tokens: 100000, cache_creation_input_tokens: 25000,
+    cache_creation: { ephemeral_5m_input_tokens: 5000, ephemeral_1h_input_tokens: 20000 },
+    output_tokens: 2,
+  };
+  f = write('buckets.jsonl', [
+    JSON.stringify({ type: 'assistant', message: { id: 'b1', content: [{ type: 'thinking', thinking: '' }], usage: bUsage } }),
+    JSON.stringify({ type: 'assistant', message: { id: 'b1', content: [{ type: 'text', text: 'done' }], usage: bUsage } }),
+    // known cost = 10×2 + 5000×2.5 + 20000×4 + 100000×0.2 = $0.11252 → $0.02 left = 2,000 output tok
+    JSON.stringify({ type: 'result', subtype: 'success', duration_ms: 1000, total_cost_usd: 0.13252, usage: {} }),
+  ]);
+  const bk = parseSession([f]).buckets;
+  check('buckets: 1h write (deduped by id)', bk.tokens.write1h, 20000, 0);
+  check('buckets: 5m write', bk.tokens.write5m, 5000, 0);
+  check('buckets: cache read', bk.tokens.read, 100000, 0);
+  check('buckets: output reconciled from cost, not the raw field', bk.tokens.output, 2000, 1);
+  check('buckets: write+output cost', bk.cost.writeAndOutput * 1000, 112.5, 0.1);
+
   console.log(`\n${n - failures}/${n} checks passed`);
   return failures;
 }
@@ -1387,6 +1419,7 @@ if (isMain) {
     const seg = s.results.length > 1 ? ` | ${s.results.length} segments (${s.results.map((r) => r.subtype).join(',')})` : '';
     console.log(`\nResult: ${s.result.subtype} | duration ${s.dur.toFixed(0)}s | turns ${s.turns}${seg}`);
     console.log(`  tokens processed: ${s.processed.toLocaleString('en-US')} | cost $${s.cost.toFixed(3)}`);
+    console.log(formatBucketsBrief(s.buckets));
   }
   console.log('');
   console.log(formatOccupancy(s));

@@ -302,6 +302,55 @@ Two harness lessons from that run, both now baked into `ab-new-vs-baseline.sh`:
 - **`CODEGRAPH_NO_PROMPT_HOOK=1` on both arms.** The machine's ambient front-load hook resolves
   to whatever is in `dist/`, which the script itself rewrites between arms.
 
+### Repo-size × question-type cost matrix (CG-39)
+
+The matrix above is indexed by language × framework and its questions are all *flow* questions.
+A third axis showed up on the first ≥25K-file repo: **question type**. A flow question's
+explore-call need grows with the repo (more hops to Read 0) — a simple question's does not, and
+on the 5-call tier each ~24K-char call is ~7K tokens of prompt-cache **write** (20× a cache
+read), so a with-codegraph arm can cost *more* than plain Read/Grep on a question the latter
+never thrashes on. Full analysis: [`large-repo-simple-question-cost.md`](large-repo-simple-question-cost.md).
+
+Rules for this table: `--model sonnet --effort high`, CLI blocked on both arms, daemon pre-warmed,
+and the **cost columns are billed buckets** (`scripts/agent-eval/cost-buckets.mjs`; `parse-run.mjs`
+prints them under every run) — never total tokens, which cache reads dominate. Output tokens are
+*reconciled* from `total_cost_usd` (the raw `output_tokens` field under-reports by ~1000×).
+**Cache-window caveat:** two runs sharing a prompt prefix inside one 1-hour window make the second
+run's first turn a cache read instead of a write; mark each run `cold` (first in its window) or
+`warm` and compare like with like.
+
+| Date · build | Repo (files) | Question type | Arm | window | turns | explore | chars/call | Read | Grep/Glob | write tok | out tok (recon.) | write+out $ | total $ | dur |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-09-02 · v1.5.0 (pre-CG-39 wording) | UnrealEngine (88,114) | overview — "카메라 시스템에 대해서 알려줘" | with | cold | 4 | 3 | 25,504 / 25,515 / 16,214 | 0 | 2 | 50,679 | 3,735 | 0.240 | **0.268** | 95s |
+| ↳ same | ↳ | ↳ | without | warm (seeded by a discarded contaminated run) | 8 | — | — | 5 | 5 | 25,860 | 4,287 | 0.146 | **0.212** | 97s |
+| 2026-09-03 · budget-as-ceiling wording (T1.1–T1.3) | UnrealEngine (100,956) | ↳ same | with-1 | warm¹ | 4 | **2** | 24,867 / 18,207 | 0 | 2 | 32,187 | 4,518 | 0.174 | **0.203** | 89s |
+| ↳ | ↳ | ↳ | without-1 | warm | 9 | — | — | 0 | 1 (+8 Bash, 1 CLI blocked) | 14,164 | 4,622 | 0.103 | **0.167** | 54s |
+| ↳ | ↳ | ↳ | with-2 | warm | 5 | **1** | 22,349 | 0 | 2 | 17,552 | 3,362 | 0.104 | **0.142** | 71s |
+| ↳ | ↳ | ↳ | without-2 | warm | 8 | — | — | 4 | 1 (+5 Bash, 1 CLI blocked) | 3,065 | 3,688 | 0.049 | **0.103** | 48s |
+| 2026-09-02 · deterministic probe | UnrealEngine (100,956) | flow — `UpdateCameraManager → … → AActor::CalcCamera` | probe | — | — | **1** | 24,989 | — | — | — | — | — | — | 9s |
+
+¹ All four 2026-09-03 runs were warm — the maintainer started them 41 min after the previous A/B, and
+the with-arm's prefix was ALSO still cached (the changed explore description is loaded via
+`ToolSearch`, so it is not in the system+tools prefix; turn 1 read 28K / wrote 4.9K). So they are a
+warm↔warm comparison among themselves and are **not** comparable to the cold 2026-09-02 rows.
+
+**Reading the 2026-09-03 rows.** The wording change did what it was meant to: explore calls
+3 → 1–2, write tokens 50.7K → 17.6–32.2K, and the "explore again" share of post-explore actions
+fell from 52–57% (CG-20) to 1 of 3. But the with-arm is still the dearer one on this question —
+write+output $0.104–0.174 vs $0.049–0.103, ~one explore payload (~7K write tokens ≈ $0.03) plus
+a larger resident context — and slower (71–89s vs 48–54s; an Unreal explore is ~9–20s). Two
+caveats before reading that as a loss: the without-arm answered **shallower** (without-2 concluded
+"AIProject has no camera system" from four config/boilerplate Reads; without-1 described the engine
+layers from directory listings without opening a source file), while both with-runs described the
+legacy `APlayerCameraManager` pipeline *and* the GameplayCameras plugin from source; and n=2. What
+remains is per-call payload, not call count — which is S3 (map-mode first call) territory, and the
+design doc's own rule says not to build S3 once calls are already 1–2.
+
+The probe row is the T2.1 sufficiency check for lowering the ≥25K tier's call ceiling: a 6-hop
+flow (`APlayerController::UpdateCameraManager → UpdateCamera → DoUpdateCamera → UpdateViewTarget →
+UpdateViewTargetInternal → AActor::CalcCamera`) connects end-to-end in **one** explore call, with the
+Flow section leading the response.
+
 ---
 
 ## 7. Known limits & gotchas (from the excalidraw/django work)

@@ -99,7 +99,10 @@ describe('Live tool surface keeps annotations with a project open (#1018)', () =
     // object spread; the annotation must survive that rewrite.
     const explore = got.find((t) => t.name === 'codegraph_explore');
     expect(explore).toBeDefined();
-    expect(explore!.description).toMatch(/Budget: make at most/);
+    // CG-39: the suffix states a ceiling, not a target ("up to N … most
+    // questions need 1–2"), never the old "make at most N".
+    expect(explore!.description).toMatch(/Budget: up to \d+ calls/);
+    expect(explore!.description).toMatch(/most questions need 1–2/);
     expectReadOnly(explore!);
   });
 });

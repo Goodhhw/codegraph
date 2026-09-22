@@ -1,0 +1,1 @@
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash D:/Git/codegraph/docs/design/large-repo-simple-question-cost-logs/no-cli-hook.sh"}]}]}}

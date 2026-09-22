@@ -88,6 +88,13 @@ function measure(run) {
     allocUsed: a.envelope ? a.used : null,
     allocEnvelope: a.envelope || null,
     allocCalls: a.calls.length,
+    // Billed buckets (CG-39). Output is the reconciled figure (see cost-buckets.mjs).
+    writeTok: s.buckets.tokens.write5m + s.buckets.tokens.write1h,
+    readTok: s.buckets.tokens.read,
+    outTok: s.buckets.tokens.output ?? s.buckets.tokens.outputRaw,
+    costWriteOut: s.buckets.cost.writeAndOutput,
+    costReported: s.buckets.reported,
+    prices: s.buckets.prices,
   };
 }
 
@@ -103,6 +110,7 @@ function span(runs, pick, fmt = (x) => String(Math.round(x))) {
 
 const int = (x) => Math.round(x).toLocaleString('en-US');
 const pct1 = (x) => `${x.toFixed(1)}%`;
+const usd = (x) => x.toFixed(3);
 
 export function formatComparison(arms) {
   const W = 36; const C = 24;
@@ -129,6 +137,15 @@ export function formatComparison(arms) {
   row('  Grep/Glob', arms.map((a) => span(a.runs, (r) => r.grep)));
   row('  Bash', arms.map((a) => span(a.runs, (r) => r.bash)));
   row('  codegraph calls', arms.map((a) => span(a.runs, (r) => r.cg)));
+  out.push('');
+
+  const prices = [...new Set(arms.flatMap((a) => a.runs.map((r) => r.prices)))].join('/');
+  rule(`billed token buckets (CG-39, ${prices} prices) — the bill is cache WRITES + output, not total tokens`);
+  row('  cache write tokens (5m+1h)', arms.map((a) => span(a.runs, (r) => r.writeTok, int)));
+  row('  cache read tokens', arms.map((a) => span(a.runs, (r) => r.readTok, int)));
+  row('  output tokens (reconciled)', arms.map((a) => span(a.runs, (r) => r.outTok, int)));
+  row('  → write+output cost ($)', arms.map((a) => span(a.runs, (r) => r.costWriteOut, usd)));
+  row('  reported cost ($)', arms.map((a) => span(a.runs, (r) => r.costReported, usd)));
   out.push('');
 
   rule('residual context occupancy (CG-7) — tokens still resident at end of run');
@@ -176,6 +193,11 @@ export function formatComparison(arms) {
   out.push('');
 
   out.push('  how to read this');
+  out.push('    buckets    compare write+output. Cache reads are 20x cheaper than writes and');
+  out.push('               dominate the token COUNT, not the bill; output is reconciled from');
+  out.push('               total_cost_usd because the raw output_tokens field under-reports.');
+  out.push('               Two runs sharing a prompt prefix inside one 1h cache window make');
+  out.push('               the second one cheaper (write→read) — separate the arms\' windows.');
   out.push('    occupancy  compare each arm\'s RETRIEVAL residual (codegraph in a with-arm,');
   out.push('               file-access in a without-arm). Shares are Claude Code on a 200k');
   out.push('               window and do NOT transfer to another host; the ratio does.');

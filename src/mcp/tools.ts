@@ -172,6 +172,36 @@ export function getExploreBudget(fileCount: number): number {
 }
 
 /**
+ * The explore call budget as the agent reads it, in the two places it appears:
+ * the `codegraph_explore` tool-description suffix and the trailing note of
+ * every explore response (CG-39). Both phrase the budget as a CEILING.
+ *
+ * The previous wording ("make at most N", "spend your remaining calls on the
+ * uncovered area BEFORE falling back to Read … Synthesize once you've used N")
+ * read as a target. The budget scales with repo size because a FLOW question
+ * on a big repo needs more hops to reach Read 0 — but an overview or
+ * single-symbol question does not get bigger with the repo, and on a ≥25K-file
+ * repo (5-call tier, ~24K chars per call) each extra call is ~7K tokens of
+ * prompt-cache WRITE, the bucket that decides the bill. Measured on
+ * UnrealEngine ("tell me about the camera system"): 3 explores where 1–2
+ * would do, and the with-codegraph arm cost 26% MORE than plain Read/Grep on a
+ * question the latter did not thrash on
+ * (docs/design/large-repo-simple-question-cost.md §7.1).
+ *
+ * This is a removal of over-steering, not new steering (CLAUDE.md: wording is
+ * a low-salience channel). The "cheaper and more complete than reading" steer
+ * stays, conditioned on a flow that did not connect — that is what keeps flow
+ * questions from falling back to Read, which is the budget's actual purpose.
+ */
+export function exploreBudgetSuffix(callBudget: number, fileCount: number): string {
+  return `Budget: up to ${callBudget} calls for this project (${fileCount.toLocaleString()} files indexed); most questions need 1–2.`;
+}
+
+export function exploreBudgetNote(callBudget: number, fileCount: number): string {
+  return `> **Explore budget: up to ${callBudget} calls for this project (${fileCount.toLocaleString()} files indexed).** Answer as soon as you can — an overview or single-symbol question usually needs 1–2 calls. Spend the remaining calls only when a flow you named did not connect end-to-end, or your question spans files this call did not cover; another explore is still cheaper and more complete than reading those files.`;
+}
+
+/**
  * File-count ceiling above which `computeGraphRelevance`'s RWR (graph-mass)
  * pass is skipped inside `handleExplore`. The pass itself only ever walks the
  * explore subgraph (hard-capped at 200 nodes via `findRelevantContext`'s
@@ -867,8 +897,14 @@ function fileSectionHeader(filePath: string, suffix: string): string {
     : `${FILE_SECTION_PREFIX}${filePath}\`**`;
 }
 
-/** Header of `codegraph_explore`'s trailing pointer list. */
-const POINTER_HEADER = '**Not shown above — explore these names for their source**';
+/**
+ * Header of `codegraph_explore`'s trailing pointer list. The NAMES under it are
+ * the CG-12 contract (a file whose bytes were withheld must stay nameable in a
+ * follow-up explore); the instruction is conditional on purpose (CG-39) — on a
+ * ≥25K-file repo the list is always long, and an unconditional "explore these"
+ * invited a drill-down call after an answer that was already complete.
+ */
+const POINTER_HEADER = '**Not shown above — explore these names if your answer still needs them**';
 /** Most files the pointer list ever names one-per-line; the rest are a count. */
 const POINTER_MAX_FILES = 10;
 /**
@@ -1560,7 +1596,7 @@ export class ToolHandler {
         if (tool.name === 'codegraph_explore') {
           return {
             ...tool,
-            description: `${tool.description} Budget: make at most ${budget} calls for this project (${stats.fileCount.toLocaleString()} files indexed).`,
+            description: `${tool.description} ${exploreBudgetSuffix(budget, stats.fileCount)}`,
           };
         }
         return tool;
@@ -5849,7 +5885,7 @@ export class ToolHandler {
       try {
         const stats = cg.getStats();
         const callBudget = getExploreBudget(stats.fileCount);
-        budgetBlock = ['', `> **Explore budget: ${callBudget} calls for this project (${stats.fileCount.toLocaleString()} files indexed).** Each call covers ~6 files; if your question spans more, spend your remaining calls on the uncovered area BEFORE falling back to Read — another explore is cheaper and more complete than reading those files. Synthesize once you've used ${callBudget}.`];
+        budgetBlock = ['', exploreBudgetNote(callBudget, stats.fileCount)];
       } catch {
         // Stats unavailable — skip budget note
       }

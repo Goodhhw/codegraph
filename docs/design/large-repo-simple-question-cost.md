@@ -1,6 +1,9 @@
 # 초대형 리포 × 간단한 질문에서 codegraph 비용이 역전되는 문제 (CG-39)
 
-**Status:** 분석 완료, 구현 전. 2026-09-02 작성.
+**Status:** Phase 0·1·3 구현 완료, T1.5 A/B 1회차(n=2/팔, 모두 warm) 실행 완료 — 호출 수 3→1~2,
+write 토큰 ~40% 감소했으나 비용·시간 통과 기준은 미달(§7.2~7.3). T2.2(상한 5→3)는 보류, S3는
+문서 규칙대로 미진행. 남은 항목: 통제 리포 flow 비회귀 A/B(로컬에 excalidraw/vscode 없음), cold↔cold
+재측정. 2026-09-02 작성, 2026-09-03 갱신.
 **증상 보고:** D:\UnrealEngine (100,956 파일 · 2.1M 노드 · 7.67M 엣지) 에 대해
 "프로젝트에 구현된 카메라 시스템에 대해서 알려줘" 를 Claude CLI(`--model sonnet --effort high`,
 stream-json)로 실행. codegraph 사용(A) / 미사용(B) 모두 5~7턴에 끝났고 합산 토큰도 비슷했지만,
@@ -184,19 +187,20 @@ Unreal에서 explore 1회는 인덱스 수정 후에도 약 20초(`project_explo
 
 ### Phase 0 — 측정 (다른 모든 단계의 선행 조건)
 
-- [x] **T0.1 (부분 완료)** 스크래치패드 `cost-breakdown.mjs` 작성·검증 완료 (버킷별 토큰·비용·비율,
-  툴별 호출 수·결과 chars, `total_cost_usd` 대비 재구성 오차 계산). **미완료: `scripts/agent-eval/
-  cost-buckets.mjs`로 리포에 이관 안 됨** — 스크래치패드는 세션 종료 시 사라지므로 다음 세션에서
-  재사용하려면 이관 필요. 이관 시 `MODEL` 환경변수로 단가 선택 가능하게.
-  - **실행 중 발견한 버그, 이관 시 반드시 포함:** `usage.output_tokens`는 신뢰 불가 — thinking
-    display가 기본값(`omitted`)일 때 턴당 2~4로 찍히지만 실제 청구된 output/thinking 토큰은
-    수천 단위였다(§7.1). `total_cost_usd - (input+write5m+write1h+read 비용)`으로 역산해야 한다.
-    현재 스크립트는 이 보정을 이미 적용함(`output (from cost gap)` 줄).
-- [ ] **T0.2** `parse-run.mjs` 요약 줄에 버킷 분해 한 줄 추가, T0.1의 output-보정 로직을 반드시 이식
-  (`parse-run.mjs`가 현재 쓰는 방식 그대로면 같은 버그를 물려받는다 — 326행 부근 `processed` 합산도
-  raw `output_tokens`를 그대로 더하고 있어 총합 토큰 수치 자체가 과소평가돼 있을 수 있음, 확인 필요).
-  `compare-arms.mjs` 팔 비교 표에도 반영.
-  - 테스트: `parse-run.mjs` 자체 self-test 블록(파일 하단 `check(...)`)에 버킷 케이스 1개 추가.
+- [x] **T0.1 완료 (2026-09-02)** `scripts/agent-eval/cost-buckets.mjs`로 이관. `MODEL=sonnet|opus|haiku`
+  (기본 sonnet — 검증된 단가는 sonnet뿐, opus/haiku는 표준 배수) 또는 `CG_PRICES='{...}'`로 단가 선택.
+  `bucketsOf / formatBuckets / formatBucketsBrief`를 export해 `parse-run.mjs`가 같은 코드를 쓴다.
+  로그 폴더의 `cost-breakdown.mjs`는 §7.1 재현용 원본으로 그대로 둔다.
+  - **output_tokens 신뢰 불가 버그 반영됨:** thinking display가 기본값(`omitted`)일 때 턴당 2~4로
+    찍히지만 실제 청구 output/thinking 토큰은 수천 단위(§7.1). `total_cost_usd - (input+write5m+
+    write1h+read 비용)`으로 역산한 `output (from cost gap)`을 신뢰값으로 출력.
+- [x] **T0.2 완료 (2026-09-02)** `parse-run.mjs`: 결과 요약 아래 `billed buckets` / `bucket cost` 두 줄
+  추가(`parseSession().buckets`), self-test에 버킷 케이스 5개 추가(id dedup · 5m/1h 분리 · 비용 역산
+  output). `compare-arms.mjs`: "billed token buckets (CG-39)" 블록(write tok · read tok · output
+  reconciled · write+output $ · reported $) + 읽는 법에 캐시 윈도우 주의 추가.
+  - **확인 결과:** `processed` 합산은 raw `output_tokens`를 더하므로 실제 output만큼 과소평가되나
+    (Unreal 실행 기준 ~3.7K / ~195K ≈ 2%), 기존 캠페인과의 비교 가능성을 위해 그대로 두고 주석으로
+    명시. 비용 격차를 설명하는 수치는 버킷 줄이다.
 - [x] **T0.3 완료 (n=1)** D:\UnrealEngine에서 실제 두 팔을 직접 실행해 분해·기록 완료 — 결과는
   §7.1. 확인된 것: A의 `write1h`가 B의 약 2배(가설과 일치), output 보정값은 A·B 비슷(3.5 가설
   기각), explore 3회 중 2회가 25K자 상한 근처(가설과 일치). **다만 n=1이고, B 실행이 같은 세션에서
@@ -205,43 +209,56 @@ Unreal에서 explore 1회는 인덱스 수정 후에도 약 20초(`project_explo
 
 ### Phase 1 — 저위험 변경 (문구·상한)
 
-- [ ] **T1.1** 예산 문구 재작성 (`src/mcp/tools.ts` `budgetBlock`, 5851행 부근).
-  - "Synthesize once you've used N" 제거. "Answer as soon as you can; an overview or single-symbol
-    question usually needs 1–2 calls. Use the remaining budget only when a flow you named did not
-    connect end-to-end."
-  - 테스트: `__tests__/explore-output-budget.test.ts`의 `'Explore budget:'` 관련 단언 갱신,
-    새 문구가 ≥5000 티어에서만 나오는지 확인.
-- [ ] **T1.2** 툴 설명 접미사 (`tools.ts:1563`) "Budget: make at most N calls" → "Budget: up to N calls;
-  most questions need 1–2". `__tests__/mcp-tool-annotations.test.ts:102` 정규식 갱신.
-- [ ] **T1.3** 포인터 목록 유도 문구 완화 (S4). `POINTER_HEADER`는 이름 계약(CG-12) 유지, 뒤따르는
-  "explore these names" 를 "if your answer still needs them" 으로. 테스트: 포인터 관련 e2e
-  (`explore-allocation-e2e.test.ts`)에서 헤더 문자열 단언 확인.
-- [ ] **T1.4** `server-instructions.ts`는 건드리지 않는다 (단일 진실 원천이지만 이번 변경은 툴 출력
-  문구 범위). 변경이 필요해지면 별도 항목으로.
-- [ ] **T1.5** `npm run build` 후 §6 프로토콜로 A/B. 통과 시 CHANGELOG `[Unreleased] > Fixes`에
-  사용자 문장 1줄 ("On very large codebases, `codegraph_explore` no longer encourages agents to
-  spend the whole call budget on simple questions, cutting prompt-cache write cost").
+- [x] **T1.1 완료 (2026-09-02)** 예산 문구를 `exploreBudgetNote(callBudget, fileCount)`로 추출
+  (`src/mcp/tools.ts`, `getExploreBudget` 바로 아래, 근거 주석 포함). 새 문구: "**Explore budget: up to
+  N calls …** Answer as soon as you can — an overview or single-symbol question usually needs 1–2
+  calls. Spend the remaining calls only when a flow you named did not connect end-to-end, or your
+  question spans files this call did not cover; another explore is still cheaper and more complete
+  than reading those files." — "Each call covers ~6 files / BEFORE falling back to Read / Synthesize
+  once you've used N" 제거.
+  - 테스트: `explore-output-budget.test.ts`에 `describe('explore budget wording is a ceiling…')` 3건
+    (헬퍼 단위 테스트 — 500+ 파일 픽스처 없이 문구 계약을 고정). 소형 프로젝트 비노출 단언은 그대로.
+- [x] **T1.2 완료** `exploreBudgetSuffix()`: "Budget: up to N calls for this project (… files
+  indexed); most questions need 1–2." `mcp-tool-annotations.test.ts` 정규식 `/Budget: up to \d+ calls/`.
+- [x] **T1.3 완료** `POINTER_HEADER` → "**Not shown above — explore these names if your answer still
+  needs them**" (이름 목록·CG-12 계약 그대로, 유도만 조건부). `explore-allocation-1500.test.ts:266`
+  문자열 갱신; `explore-reservation-invariant.test.ts`의 `/Not shown above/` 정규식은 그대로 통과.
+- [x] **T1.4** `server-instructions.ts` 미변경 (확인).
+- [x] **T1.5 (1회차 완료, 2026-09-03)** 빌드 후 Unreal 개요 질문 A/B 2회/팔 실행 — §7.2. explore
+  호출 3→1~2(중앙값 1.5, 기준 ≤2 통과), write 토큰 50.7K→17.6~32.2K. **비용 기준(with w+o ≤ without)과
+  시간 기준은 미달** — 단 without 팔이 얕은 답(디렉터리 목록/보일러플레이트만 보고 답)을 낸 비대칭이
+  있고 n=2. CHANGELOG `[Unreleased] > Fixes`에 1줄 추가함(문구 변경 자체는 출시 대상이고, "호출 수·write
+  감소"는 측정으로 뒷받침됨; "without보다 싸다"는 주장은 넣지 않음). **미완료:** 통제 리포(excalidraw/
+  vscode) flow 비회귀 A/B — 이 머신에 클론이 없어 실행 못 함. cold↔cold 재측정도 미완(§7.2 각주).
 
 ### Phase 2 — 상한·모드 변경 (A/B 게이트)
 
-- [ ] **T2.1** Unreal flow 질문 1개로 3회 예산 충분성 프로브 (`scripts/agent-eval/probe-explore.mjs`).
-  연결되면 T2.2 진행, 아니면 S2 보류하고 사유 기록.
-- [ ] **T2.2** `getExploreBudget` ≥25000 티어 5 → 3 (또는 §4 S2-(b) 조건부 노출). 테스트:
-  `explore-output-budget.test.ts` 티어 경계 단언, CLAUDE.md 예산 표 갱신.
-- [ ] **T2.3** S3 지도 모드 설계 노트 작성 후 구현 여부 결정. 결정 입력: T0.3에서 첫 호출의 chars가
-  실제로 지배적인지, T1.x만으로 호출 수가 1~2로 떨어졌는지. 떨어졌다면 S3는 **하지 않는다**
-  (iter2 위험 대비 이득 작음).
-- [ ] **T2.4** (S3 진행 시) 지도 모드 응답의 모든 안내 문구가 explore 재호출을 가리키는지 확인.
-  explore 출력이 Read를 권하는 경로가 하나도 없는지 `grep -n "Read" src/mcp/tools.ts`로 재점검.
+- [x] **T2.1 완료 (2026-09-02, 100,956 파일 인덱스)** `probe-explore.mjs D:/UnrealEngine
+  "APlayerController::PlayerTick UpdateRotation UpdateCameraManager APlayerCameraManager::UpdateCamera
+  DoUpdateCamera UpdateViewTarget AActor::CalcCamera"` → Flow 섹션이 **1회 호출**(24,989자, 9초)로
+  `UpdateCameraManager → UpdateCamera → DoUpdateCamera → UpdateViewTarget → UpdateViewTargetInternal →
+  CalcCamera` 6홉을 end-to-end 연결. (`PlayerTick`/`UpdateRotation`은 같은 경로가 아니라 제외됨 —
+  `UpdateCameraManager`의 호출자는 `LevelTick.cpp`.) 짧은 질의("APlayerController UpdateCameraManager
+  APlayerCameraManager UpdateCamera")도 1회로 두 파일 본문 + `UpdateCameraManager → UpdateCamera` 엣지
+  반환. **결론: 이 flow는 3회 예산으로 충분(1회면 됨). T2.2 진행 가능.**
+- [ ] **T2.2 보류 (2026-09-03 결정)** T2.1은 통과했지만 T1.5에서 이미 호출 수가 1~2로 떨어져 5회
+  상한이 이 질문에서 구속 조건이 아니게 됐다. 지금 5→3으로 낮추면 이 A/B 기록과 교란되고, 25K 초과
+  리포의 긴 flow에 대한 측정값은 여전히 없다. 다음 flow A/B(Unreal 카메라 flow 질문, 에이전트 실행)에서
+  실제 호출 수가 ≤3으로 나오면 그때 낮춘다. `explore-output-budget.test.ts` 티어 경계 단언은 그대로.
+- [x] **T2.3 결정: S3 진행하지 않음.** T1.x만으로 호출 수가 1~2로 떨어졌으므로 문서 규칙대로 S3는
+  보류. 다만 §7.3의 남은 격차는 호출 *수*가 아니라 호출당 페이로드(22~25K자 ≈ 7K write 토큰 ≈ $0.03)
+  이므로, 격차를 더 줄이려면 S3 또는 "첫 호출 파일 수 축소" 같은 페이로드 축소가 유일한 레버다 —
+  iter2 실패(Read 폴백 증가) 위험을 감수할지는 유지보수자 판단.
+- [ ] **T2.4** (S3 진행 시에만) 지도 모드 응답의 모든 안내 문구가 explore 재호출을 가리키는지 확인.
 
 ### Phase 3 — 방법론·문서
 
-- [ ] **T3.1** `docs/design/dynamic-dispatch-coverage-playbook.md` §6 아래에 "Repo-size × question-type
-  cost matrix" 절 추가. 열: 리포·파일 수·질문 유형·팔·턴·explore 호출·write 토큰·output 토큰·비용·시간.
-- [ ] **T3.2** CLAUDE.md "Validation methodology" 4번 통과 기준에 "간단한 질문에서 `cache_creation +
-  output` 비용 비회귀" 추가, 측정은 T0.1로.
-- [ ] **T3.3** CLAUDE.md 예산 표의 ~20K/~40K 행이 외삽임을 명시하거나 T2 결과로 대체.
-- [ ] **T3.4** 이 문서 §7에 최종 수치 기록 후 Status 갱신.
+- [x] **T3.1 완료** 플레이북 §6 아래 "Repo-size × question-type cost matrix (CG-39)" 절 — §7.1·§7.2
+  행 + T2.1 프로브 행, `window`(cold/warm) 열, 캐시 윈도우 주의 포함.
+- [x] **T3.2 완료** CLAUDE.md "Validation methodology" 4번 통과 기준에 ≥25K 리포 간단 질문의
+  `cache_creation + output` 비회귀 + explore 중앙값 ≤ 2 + 버킷으로 읽을 것 + 캐시 윈도우 주의 추가.
+- [x] **T3.3 완료** CLAUDE.md 예산 표에 UnrealEngine 측정 행 추가, ~20K/~40K 행이 외삽임을 명시.
+- [x] **T3.4** §7.2·7.3 기록, Status 갱신 (2026-09-03). 통제 리포 A/B와 cold 재측정이 끝나면 다시 갱신.
 
 ---
 
@@ -258,6 +275,11 @@ CLAUDE.md 규칙 그대로: `--model sonnet --effort high`, 팔당 **2회 이상
 | 질문 (flow, 통제) | "PlayerController 입력이 CameraManager의 뷰 갱신까지 어떻게 도달해" |
 | 팔 | with (codegraph MCP) / without (빈 MCP), 필요 시 new-build vs baseline (`ab-new-vs-baseline.sh`) |
 | 기록 | 턴 수 · explore 호출 수 · 호출당 chars · Read · Grep · `cache_creation`(5m/1h) · `output` · `cache_read` · `total_cost_usd` · duration |
+
+**캐시 윈도우 (§7.1에서 발견, 필수):** 같은 system+tools 프리픽스로 1시간 안에 다시 실행하면 두 번째
+실행의 1턴째가 `write→read`로 바뀌어 싸게 나온다(TTL은 읽을 때마다 갱신). 따라서 각 팔의 **첫 실행은
+직전 실행 후 1시간이 지난 뒤(cold)** 시작하고, 두 번째 실행은 의도적으로 warm으로 두어 cold↔cold,
+warm↔warm 끼리만 비교한다. 표에 `window` 열로 기록.
 
 **통과 기준**
 1. 개요 질문: with 팔의 `cache_creation + output` 비용 ≤ without 팔 (동일 턴 수 범위에서), explore 호출 중앙값 ≤ 2.
@@ -316,8 +338,39 @@ Bash를 통한 오염을 막았다 — 최초 시도(hook 없음)는 B가 `codeg
 > `tool_result` 안에 원문 그대로 포함한다. 로컬 커밋까지만 승인됐고 **origin/upstream에 푸시하지
 > 않는다** — 공개 GitHub 포크이므로 push 전 반드시 사용자에게 재확인할 것.
 
-### 7.2 이후 실행 (채워 넣기)
+### 7.2 실행 2회차 (2026-09-03, T1.1~T1.3 적용 빌드, 100,956 파일, 팔당 2회)
 
-| 날짜 | 빌드 | 리포 | 질문 | 팔 | 턴 | explore | chars/호출 | Read | Grep | write tok | out tok | cost | dur |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| | | | | | | | | | | | | | |
+같은 질문, 같은 프로토콜(sonnet/high, CLI 차단 훅, 데몬 프리웜). 사용자 요청으로 캐시 윈도우 만료
+(00:27) 전인 00:08에 시작해 **4회 모두 warm** — with 팔의 프리픽스도 캐시에 있었다(explore 툴 설명은
+`ToolSearch`로 지연 로드되므로 system+tools 프리픽스에 들어가지 않는다; with-1의 1턴째 read 28,042 /
+write 4,904). 따라서 이 표는 warm↔warm 비교이며 §7.1의 cold A와 직접 비교할 수 없다.
+
+| 팔 | window | 턴 | explore | chars/호출 | Read | Grep/Glob | Bash | write1h tok | out(보정) tok | write+out | cost | dur |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| with-1 | warm | 4 | **2** | 24,867 / 18,207 | 0 | 2 | 0 | 32,187 | 4,518 | $0.174 | **$0.203** | 89s |
+| without-1 | warm | 9 | — | — | 0 | 1 | 8 (CLI 차단 1) | 14,164 | 4,622 | $0.103 | **$0.167** | 54s |
+| with-2 | warm | 5 | **1** | 22,349 | 0 | 2 | 0 | 17,552 | 3,362 | $0.104 | **$0.142** | 71s |
+| without-2 | warm | 8 | — | — | 4 | 1 | 5 (CLI 차단 1) | 3,065 | 3,688 | $0.049 | **$0.103** | 48s |
+
+원본: `large-repo-simple-question-cost-logs/run2-ceiling-wording/` (4 jsonl + `compare.txt` +
+`run.sh` — Windows 데몬 프리웜은 `sleep 900 | codegraph serve --mcp …` 로 stdin을 잡아둬야 뜬다,
+`</dev/null`이면 클라이언트가 데몬을 띄우기 전에 종료됨).
+
+### 7.3 2회차 판정
+
+- **S1 효과 확인:** explore 호출 3 → 2 / 1 (중앙값 1.5, 기준 ≤2 통과). write 토큰 50,679 → 32,187 /
+  17,552. explore 직후 행동 중 "explore again"은 3건 중 1건(CG-20의 52~57%에서 하락). 포인터 목록
+  변경(T1.3)과 예산 문구 변경(T1.1/1.2)의 기여는 분리 측정하지 않음.
+- **비용 기준 미달:** write+output은 with $0.104~0.174 vs without $0.049~0.103, 총액 $0.142~0.203 vs
+  $0.103~0.167. with-2($0.104)는 without-1($0.103)과 같은 수준까지 내려왔지만 중앙값으로는 with가 여전히
+  높다. 격차의 실체는 **explore 1회 페이로드(22~25K자 ≈ 7K write 토큰 ≈ $0.03) + 더 큰 상주 컨텍스트**
+  (최종 컨텍스트 55K vs 40K 토큰).
+- **시간 기준 미달:** with 71~89s vs without 48~54s. Unreal explore 1회 9~20초가 그대로 반영.
+- **비대칭 주의:** without 팔은 답이 얕다 — without-2는 설정 파일·보일러플레이트 4개를 읽고 "AIProject에
+  카메라 시스템 없음"으로 끝냈고, without-1은 소스를 한 파일도 열지 않고 디렉터리 목록으로 엔진 계층을
+  서술했다. with 팔 2회는 모두 `APlayerCameraManager` 레거시 파이프라인과 GameplayCameras 플러그인을
+  소스 기반으로 설명했다. 즉 "같은 답을 더 비싸게"가 아니라 "더 깊은 답을 explore 1회분만큼 더 비싸게"
+  에 가깝다. 이 비대칭을 통제하려면 답 품질 채점(ground-truth 대조)이 필요하다.
+- **§3.5(출력 토큰) 재확인:** output(보정)은 두 팔 모두 3.4~4.6K로 차이 없음. 기각 유지.
+- **결론:** 문구 변경(S1/S4)은 유효하지만 ≥25K 리포 개요 질문의 비용 역전을 없애지는 못한다. 남은
+  레버는 페이로드(S3 계열)뿐이며, T2.3 규칙대로 이번엔 착수하지 않는다. 통제 리포 비회귀 A/B는 미실행.

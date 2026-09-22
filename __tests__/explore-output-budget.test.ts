@@ -10,7 +10,14 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { getExploreOutputBudget, getExploreBudget, normalizeQuerySpelling, ToolHandler } from '../src/mcp/tools';
+import {
+  getExploreOutputBudget,
+  getExploreBudget,
+  exploreBudgetNote,
+  exploreBudgetSuffix,
+  normalizeQuerySpelling,
+  ToolHandler,
+} from '../src/mcp/tools';
 import CodeGraph from '../src/index';
 
 describe('getExploreOutputBudget', () => {
@@ -137,6 +144,41 @@ describe('getExploreOutputBudget', () => {
  * Regression guard for #185 — protects against future edits to handleExplore
  * silently re-introducing the fixed 35KB cap on small projects.
  */
+describe('explore budget wording is a ceiling, not a target (CG-39)', () => {
+  // On a ≥25K-file repo each explore call is ~7K tokens of prompt-cache write;
+  // "make at most N … Synthesize once you've used N" pushed an overview
+  // question from the 1–2 calls it needed to 3, and the with-codegraph arm
+  // cost 26% more than Read/Grep (large-repo-simple-question-cost.md §7.1).
+  it('tool-description suffix says "up to N" and that most questions need 1–2', () => {
+    const s = exploreBudgetSuffix(5, 100956);
+    expect(s).toMatch(/^Budget: up to 5 calls for this project \(100,956 files indexed\)/);
+    expect(s).toContain('most questions need 1–2');
+    expect(s).not.toMatch(/make at most/);
+  });
+
+  it('response note tells the agent to answer as soon as it can', () => {
+    const note = exploreBudgetNote(5, 100956);
+    expect(note).toContain('**Explore budget: up to 5 calls for this project (100,956 files indexed).**');
+    expect(note).toContain('Answer as soon as you can');
+    expect(note).toContain('usually needs 1–2 calls');
+    // The remaining calls are conditioned on a flow that did not connect —
+    // that is what keeps FLOW questions from falling back to Read.
+    expect(note).toMatch(/only when a flow you named did not connect end-to-end/);
+    expect(note).toContain('cheaper and more complete than reading');
+    expect(note).not.toMatch(/Synthesize once/);
+    expect(note).not.toMatch(/Each call covers/);
+    expect(note).not.toMatch(/BEFORE falling back to Read/);
+  });
+
+  it('every tier gets the same shape — only the number changes', () => {
+    for (const files of [600, 5000, 15000, 25000, 100000]) {
+      const n = getExploreBudget(files);
+      expect(exploreBudgetNote(n, files)).toContain(`up to ${n} calls`);
+      expect(exploreBudgetSuffix(n, files)).toContain(`up to ${n} calls`);
+    }
+  });
+});
+
 describe('codegraph_explore output respects the adaptive budget', () => {
   let testDir: string;
   let cg: CodeGraph;

@@ -263,7 +263,7 @@ describe('#1500 — generated Go CRUD beside a hand-written payroll workflow', (
       // A cliffed file costs ~100 chars instead of ~4,500, and stays one
       // follow-up explore away — withholding is only cheap if it stays nameable.
       expect(bytes.get('internal/gen/fkit/payroll/payslip.go') ?? 0).toBe(0);
-      expect(response).toContain('**Not shown above — explore these names for their source**');
+      expect(response).toContain('**Not shown above — explore these names if your answer still needs them**');
       expect(response).toMatch(/internal\/gen\/fkit\/payroll\/payslip\.go: \w+:\d+/);
     });
 
